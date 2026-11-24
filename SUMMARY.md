@@ -2,7 +2,7 @@
 
 ## Key MCP concepts
 
-The Hugging Face article (and the full Turing Post piece it links to) presents the **Model Context Protocol** as an open standard, released by Anthropic in November 2024, for connecting AI applications to tools and data. Without a standard, every application needs custom code for every data source, which the article calls brittle and hard to scale: M applications and N tools mean M×N integrations. MCP reduces this to M+N, because each side implements the protocol once.
+The Hugging Face article (and the full Turing Post piece it links to) presents the **Model Context Protocol** as an open standard, released by Anthropic in November 2024, for connecting AI applications to tools and data. Without it, M applications and N tools need M×N brittle custom integrations; MCP reduces this to M+N.
 
 The architecture has three roles:
 
@@ -10,7 +10,7 @@ The architecture has three roles:
 - Inside the host, an **MCP Client** keeps a one-to-one connection with one server, speaking JSON-RPC over a transport such as stdio or HTTP.
 - The **MCP Server** wraps a capability and advertises what it offers: **tools** (actions the model can call), **resources** (read-only context) and **prompts** (reusable templates).
 
-Because tools are discovered at runtime, the model chooses them, so tool names and descriptions directly affect agent performance. The article also notes limitations: the overhead of running many servers, still-maturing security, and overkill for one or two simple APIs.
+Tools are discovered at runtime and chosen by the model, so their names and descriptions directly affect agent performance. The article also notes limitations: the overhead of running many servers, still-maturing security, and overkill for one or two simple APIs.
 
 ## The Fetch MCP server
 
@@ -31,4 +31,4 @@ The reference **Fetch** server (`mcp-server-fetch`) exposes a single tool, `fetc
 
 Overall, Fetch is a good example of a narrow, well-documented tool. A stricter design would separate "fetch raw content" from "convert to markdown".
 
-*Sources:* Hugging Face, "What Is MCP, and Why Is Everyone Suddenly Talking About It?" (https://huggingface.co/blog/Kseniase/mcp); Turing Post, full article (https://www.turingpost.com/p/mcp); Fetch server documentation (https://pypi.org/project/mcp-server-fetch).
+*Sources:* https://huggingface.co/blog/Kseniase/mcp, https://www.turingpost.com/p/mcp, https://pypi.org/project/mcp-server-fetch
