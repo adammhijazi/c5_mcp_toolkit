@@ -4,7 +4,7 @@
 
 A weather-aware outing planner for Lebanon, built as an **MCP server with exactly three tools** (FastMCP) and used by an **agent built with the OpenAI Agents SDK**.
 
-🎥 **Demo video:** *add your link here*
+🎥 **Demo video:** https://youtu.be/zjD50nKjQZE
 
 | Category | Tool | What it does | Changes state? |
 |---|---|---|---|
