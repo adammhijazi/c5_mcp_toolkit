@@ -64,7 +64,7 @@ def make_model(name: str):
     if not key:
         sys.exit("Missing GEMINI_API_KEY. Put it in a .env file (see .env.example) or set it as an environment variable.")
     client = AsyncOpenAI(api_key=key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                         max_retries=0)       # don't retry a busy model; switch to the next model instead
+                         max_retries=0, timeout=60)  # don't wait on a busy model; switch to the next one instead
     return OpenAIChatCompletionsModel(model=name, openai_client=client)
 
 
@@ -112,10 +112,11 @@ async def ask(agent_factory, question: str, history: list | None = None):
                 return result, name
             except Exception as e:                # rate limit (429), overloaded (503), unknown model (404)
                 text = str(e)
-                if any(c in text for c in ("429", "500", "503", "404", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "NOT_FOUND")):
-                    code = next((c for c in ("429", "503", "500", "404") if c in text), "?")
+                if any(c in text for c in ("429", "500", "503", "404", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "NOT_FOUND",
+                                           "timed out", "Timeout")):
+                    code = next((c for c in ("429", "503", "500", "404") if c in text), "timeout")
                     reason = {"429": "rate limit / free quota used up", "503": "overloaded", "500": "server error",
-                              "404": "not available for this key"}.get(code, "error")
+                              "404": "not available for this key", "timeout": "no answer within 60 s"}.get(code, "error")
                     print(f"   [model] {name}: {code} {reason}, trying the next one...")
                     last = e
                     continue
