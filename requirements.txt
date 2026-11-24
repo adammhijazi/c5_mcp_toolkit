@@ -1,0 +1,7 @@
+fastmcp>=2.12
+openai-agents>=0.2
+openai
+httpx
+pydantic>=2
+python-dotenv
+pytest
