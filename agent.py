@@ -27,10 +27,25 @@ from agents.mcp import MCPServerStdio
 load_dotenv(Path(__file__).parent / ".env")
 set_tracing_disabled(True)                       # tracing uploads to OpenAI; not needed here
 
+
+def _make_stdio_safe_for_notebooks() -> None:
+    """In Jupyter/Colab, sys.stderr has no real file descriptor, but the MCP stdio client needs one for the
+    server's log output. In that case, send the server's log to mcp_server.log instead."""
+    try:
+        sys.stderr.fileno()
+    except Exception:
+        import agents.mcp.server as sdk_server
+        from mcp.client.stdio import stdio_client as original_stdio_client
+        log = open(Path(__file__).parent / "mcp_server.log", "a", encoding="utf-8")
+        sdk_server.stdio_client = lambda params, *args, **kwargs: original_stdio_client(params, errlog=log)
+
+
+_make_stdio_safe_for_notebooks()
+
 SERVER_PATH = str(Path(__file__).parent / "server.py")
 PROVIDER = os.getenv("PROVIDER", "gemini")
-GEMINI_MODELS = [m for m in [os.getenv("GEMINI_MODEL"), "gemini-3.5-flash", "gemini-3.6-flash", "gemini-2.5-flash",
-                             "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"] if m]
+GEMINI_MODELS = [m for m in [os.getenv("GEMINI_MODEL"), "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3-flash-preview",
+                             "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"] if m]
 
 INSTRUCTIONS = f"""You are a friendly outing planner for Lebanon. Today is {__import__('datetime').date.today().isoformat()}.
 You have three MCP tools. Pick the ONE that matches the request:
@@ -48,7 +63,8 @@ def make_model(name: str):
     key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not key:
         sys.exit("Missing GEMINI_API_KEY. Put it in a .env file (see .env.example) or set it as an environment variable.")
-    client = AsyncOpenAI(api_key=key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+    client = AsyncOpenAI(api_key=key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                         max_retries=0)       # don't retry a busy model; switch to the next model instead
     return OpenAIChatCompletionsModel(model=name, openai_client=client)
 
 
@@ -81,21 +97,32 @@ def print_round_trip(result) -> None:
 
 
 async def ask(agent_factory, question: str, history: list | None = None):
-    """Run one user turn, trying the next Gemini model if one is busy or unavailable."""
+    """Run one user turn, trying the next Gemini model if one is busy or out of free quota.
+    The model that worked is moved to the front, so later turns try it first."""
+    global GEMINI_MODELS
     models = GEMINI_MODELS if PROVIDER == "gemini" else [os.getenv("OPENAI_MODEL", "gpt-4.1-mini")]
     last = None
-    for name in models:
-        try:
-            agent = agent_factory(make_model(name))
-            result = await Runner.run(agent, (history or []) + [{"role": "user", "content": question}])
-            return result, name
-        except Exception as e:                    # rate limit (429), overloaded (503), unknown model (404)
-            if any(code in str(e) for code in ("429", "503", "404", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "NOT_FOUND")):
-                print(f"   [model] {name} unavailable, trying the next one...")
-                last = e
-                await asyncio.sleep(2)
-                continue
-            raise
+    for attempt in range(2):
+        for name in list(models):
+            try:
+                agent = agent_factory(make_model(name))
+                result = await Runner.run(agent, (history or []) + [{"role": "user", "content": question}])
+                if PROVIDER == "gemini" and GEMINI_MODELS[0] != name:
+                    GEMINI_MODELS = [name] + [m for m in GEMINI_MODELS if m != name]
+                return result, name
+            except Exception as e:                # rate limit (429), overloaded (503), unknown model (404)
+                text = str(e)
+                if any(c in text for c in ("429", "500", "503", "404", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "NOT_FOUND")):
+                    code = next((c for c in ("429", "503", "500", "404") if c in text), "?")
+                    reason = {"429": "rate limit / free quota used up", "503": "overloaded", "500": "server error",
+                              "404": "not available for this key"}.get(code, "error")
+                    print(f"   [model] {name}: {code} {reason}, trying the next one...")
+                    last = e
+                    continue
+                raise
+        if attempt == 0:
+            print("   [model] all models busy, waiting 30 s and trying again...")
+            await asyncio.sleep(30)
     raise last
 
 
@@ -109,6 +136,10 @@ DEMO = [
 
 
 async def main(demo: bool):
+    if demo:                                     # fresh outings file so the demo can be re-run (e.g. for a recording)
+        demo_file = Path(__file__).parent / "data" / "demo_outings.json"
+        demo_file.unlink(missing_ok=True)
+        os.environ["OUTINGS_FILE"] = str(demo_file)
     async with MCPServerStdio(name="lebanon-outing-planner",
                               params={"command": sys.executable, "args": [SERVER_PATH], "env": dict(os.environ)},
                               cache_tools_list=True, client_session_timeout_seconds=30) as server:
@@ -146,6 +177,7 @@ async def main(demo: bool):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(line_buffering=True)  # print each line immediately (otherwise output can be lost in notebooks)
     if "--offline" in sys.argv:              # use the server's built-in sample weather (no internet needed)
         os.environ["WEATHER_OFFLINE"] = "1"
     asyncio.run(main(demo="--demo" in sys.argv))
